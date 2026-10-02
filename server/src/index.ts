@@ -1,10 +1,11 @@
-import "dotenv/config";
+import "./utils/env.js";
 import express, { type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
 import path from "node:path";
 import fs from "node:fs";
 
 import { logger } from "./utils/logger.js";
+import { loadedEnvFiles } from "./utils/env.js";
 import researchRouter from "./routes/research.js";
 import runsRouter from "./routes/runs.js";
 import agentsRouter, { discoverHandler } from "./routes/agents.js";
@@ -79,7 +80,10 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 const server = app.listen(PORT, () => {
-  logger.info({ port: PORT, clientOrigin: CLIENT_ORIGIN }, "server.started");
+  logger.info(
+    { port: PORT, clientOrigin: CLIENT_ORIGIN, envFiles: loadedEnvFiles },
+    "server.started"
+  );
 });
 
 // Graceful shutdown so Render restarts are clean.

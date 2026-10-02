@@ -3,6 +3,7 @@ import {
   PROVIDERS,
   providerApiKey,
   providerBaseURL,
+  providerModel,
   type ProviderConfig,
   type ProviderName,
 } from "./providers.js";
@@ -32,6 +33,8 @@ export interface LLMResult {
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** Token budget used when a reasoning model returns empty content too cheaply. */
+const RETRY_MAX_TOKENS = 4096;
 
 /** In-memory per-provider daily request counters (FR-2.5 / TDD §3.3). */
 const dailyCounters = new Map<ProviderName, { count: number; resetAt: number }>();
@@ -101,7 +104,8 @@ export async function callLLM(
       continue;
     }
 
-    const model = options.model ?? provider.defaultModel;
+    const model = options.model ?? providerModel(provider);
+    const temperature = options.temperature ?? 0.7;
 
     try {
       const client = new OpenAI({
@@ -111,22 +115,36 @@ export async function callLLM(
         maxRetries: 0,
       });
 
-      const response = await client.chat.completions.create({
-        model,
-        messages,
-        temperature: options.temperature ?? 0.7,
-        ...(options.maxTokens ? { max_tokens: options.maxTokens } : {}),
-      });
+      // Reasoning models (e.g. Groq's openai/gpt-oss-*) can spend the entire
+      // max_tokens budget on hidden reasoning and return *empty* content. Retry
+      // once with a larger budget before falling over to the next provider.
+      let maxTokens = options.maxTokens;
 
-      const content = response.choices[0]?.message?.content ?? "";
-      if (!content.trim()) {
+      for (let pass = 0; ; pass++) {
+        const response = await client.chat.completions.create({
+          model,
+          messages,
+          temperature,
+          ...(maxTokens ? { max_tokens: maxTokens } : {}),
+        });
+
+        const content = response.choices[0]?.message?.content ?? "";
+        if (content.trim()) {
+          recordUsage(provider.name);
+          logger.debug({ provider: provider.name, model, chars: content.length }, "llm.call.ok");
+          return { content, provider: provider.name, model };
+        }
+
+        const canRetry = pass === 0 && maxTokens !== undefined && maxTokens < RETRY_MAX_TOKENS;
+        if (canRetry) {
+          maxTokens = RETRY_MAX_TOKENS;
+          logger.debug({ provider: provider.name, model, maxTokens }, "llm.call.empty_retry");
+          continue;
+        }
+
         errors.push(`${provider.name}: empty response`);
-        continue;
+        break;
       }
-
-      recordUsage(provider.name);
-      logger.debug({ provider: provider.name, model, chars: content.length }, "llm.call.ok");
-      return { content, provider: provider.name, model };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       errors.push(`${provider.name}: ${message}`);
