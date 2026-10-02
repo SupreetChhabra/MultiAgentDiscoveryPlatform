@@ -1,0 +1,89 @@
+{
+  "version": "2.0.0",
+  "agents": [
+    {
+      "id": "search-agent",
+      "name": "SearchAgent",
+      "description": "Discovers recent, reliable sources on the web using a keyless DuckDuckGo meta-search and returns a structured list of findings with URLs.",
+      "capabilities": [
+        "web search",
+        "source discovery",
+        "query formulation",
+        "finding recent information"
+      ],
+      "tools": ["webSearch"],
+      "provider": "duckduckgo",
+      "version": "2.0.0"
+    },
+    {
+      "id": "reader-agent",
+      "name": "ReaderAgent",
+      "description": "Extracts deep page content by scraping the most relevant URL with an SSRF-guarded, hardened HTML reader and returning capped plain text.",
+      "capabilities": [
+        "content extraction",
+        "web scraping",
+        "deep reading",
+        "article parsing"
+      ],
+      "tools": ["scrapeUrl"],
+      "provider": "local",
+      "version": "2.0.0"
+    },
+    {
+      "id": "writer-agent",
+      "name": "WriterAgent",
+      "description": "Synthesises gathered research into a comprehensive, well-structured Markdown report with an executive summary, sections and sources.",
+      "capabilities": [
+        "report writing",
+        "summarisation",
+        "markdown generation",
+        "content synthesis"
+      ],
+      "tools": [],
+      "provider": "gemini",
+      "version": "2.0.0"
+    },
+    {
+      "id": "critic-agent",
+      "name": "CriticAgent",
+      "description": "Reviews a report for accuracy, depth and clarity, scores it 1-10 and suggests specific, actionable improvements.",
+      "capabilities": [
+        "quality review",
+        "critique",
+        "fact checking",
+        "scoring",
+        "evaluation"
+      ],
+      "tools": [],
+      "provider": "cerebras",
+      "version": "2.0.0"
+    },
+    {
+      "id": "summarizer-agent",
+      "name": "SummarizerAgent",
+      "description": "Condenses long documents into concise bullet-point summaries and key takeaways.",
+      "capabilities": ["summarisation", "key takeaways", "condensing", "tl;dr"],
+      "tools": [],
+      "provider": "groq",
+      "version": "1.0.0"
+    },
+    {
+      "id": "translator-agent",
+      "name": "TranslatorAgent",
+      "description": "Translates text between natural languages while preserving technical terminology and formatting.",
+      "capabilities": ["translation", "localisation", "multilingual"],
+      "tools": [],
+      "provider": "groq",
+      "version": "1.0.0"
+    },
+    {
+      "id": "fact-check-agent",
+      "name": "FactCheckAgent",
+      "description": "Cross-references claims against retrieved sources and flags statements that lack supporting evidence.",
+      "capabilities": ["fact checking", "claim verification", "evidence linking"],
+      "tools": ["webSearch"],
+      "provider": "groq",
+      "version": "1.0.0"
+    }
+  ]
+}

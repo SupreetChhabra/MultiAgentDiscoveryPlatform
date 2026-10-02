@@ -1,0 +1,356 @@
+﻿
+
+Document 2 — Technical Design Document
+Project: Multi-Agent Discovery PlatformVersion: 2.0 — React + Node.js Free-Tier ArchitectureAudience: Coding agent / implementation team
+
+1. Architecture Overview
+text
+┌─────────────────────────────────────────────────────────────┐│                    React Frontend (Vercel Free)              ││  Topic Input  │  Live Step Cards  │  Report + Download       ││  (Vite + React + Tailwind + DOMPurify)                      │└──────────────────────────┬──────────────────────────────────┘                           │  POST /api/research  →  returns runId                           │  GET  /api/runs/:id/stream  (SSE)                           │  GET  /api/runs/:id/report                           │┌──────────────────────────▼──────────────────────────────────┐│                  Node.js Backend (Render Free)               ││  Express.js API  │  SSE Emitter  │  Run Store (in-memory)   │└──────────────────────────┬──────────────────────────────────┘                           │┌──────────────────────────▼──────────────────────────────────┐│              Orchestrator (LangGraph.js / State Machine)      ││  Task Decomposer  │  Agent Selector  │  Result Aggregator    │└──────────────────────────┬──────────────────────────────────┘                           │┌──────────────────────────▼──────────────────────────────────┐│                  LLM Provider Router                          ││   Groq → Cerebras → Gemini → Ollama (failover chain)         │└──────────────────────────┬──────────────────────────────────┘                           │┌──────────────────────────▼──────────────────────────────────┐│                    Agent Layer                                ││  SearchAgent │ ReaderAgent │ WriterAgent │ CriticAgent       │└──────────────────────────┬──────────────────────────────────┘                           │┌──────────────────────────▼──────────────────────────────────┐│              Tool Layer (all free)                            ││  ddgSearch  │  scrapeUrl  │  embedAndStore                    │└──────────────────────────┬──────────────────────────────────┘                           │┌──────────────────────────▼──────────────────────────────────┐│              Storage (all local / free)                       ││  ChromaDB (vectors)  │  JSON/SQLite (registry)  │ logs/     │└─────────────────────────────────────────────────────────────┘
+
+2. Project Structure (Monorepo)
+text
+multi-agent-discovery/├── package.json                # Root — workspaces (client + server)├── pnpm-workspace.yaml         # or npm workspaces├── .env.example├── .gitignore├── README.md│├── client/                     # React frontend│   ├── package.json│   ├── vite.config.ts│   ├── index.html│   ├── tsconfig.json│   ├── public/│   └── src/│       ├── main.tsx│       ├── App.tsx│       ├── api/│       │   └── client.ts       # fetch wrappers + SSE│       ├── components/│       │   ├── TopicInput.tsx│       │   ├── StepCard.tsx│       │   ├── PipelinePanel.tsx│       │   ├── ReportPanel.tsx│       │   ├── RawOutputPanel.tsx│       │   └── DownloadButtons.tsx│       ├── hooks/│       │   └── useResearchRun.ts   # SSE + state management│       ├── types/│       │   └── pipeline.ts│       └── styles/│           └── globals.css│├── server/                     # Node.js backend│   ├── package.json│   ├── tsconfig.json│   └── src/│       ├── index.ts            # Express app entrypoint│       ├── routes/│       │   ├── research.ts     # POST /api/research│       │   ├── runs.ts         # GET /api/runs/:id/stream, /report│       │   └── agents.ts       # GET /api/agents, POST /api/discover│       ├── orchestrator/│       │   ├── pipeline.ts     # Core orchestrator (async generator)│       │   └── runStore.ts     # In-memory run state│       ├── agents/│       │   ├── searchAgent.ts│       │   ├── readerAgent.ts│       │   ├── writerChain.ts│       │   └── criticChain.ts│       ├── llm/│       │   ├── router.ts       # Failover chain│       │   └── providers.ts    # Provider configs│       ├── tools/│       │   ├── search.ts       # DuckDuckGo│       │   ├── scrape.ts       # axios + cheerio│       │   └── embed.ts        # @xenova/transformers│       ├── registry/│       │   ├── agents.json     # Capability registry│       │   └── discovery.ts    # ChromaDB + embeddings│       ├── schemas/│       │   └── pipeline.ts     # Zod schemas│       └── utils/│           ├── logger.ts       # pino│           └── config.ts       # env loading│├── data/│   ├── chroma/                 # ChromaDB persistent storage│   └── checkpoints/            # Intermediate state│├── logs/│   └── pipeline.log│└── tests/    ├── server/    │   ├── tools.test.ts    │   ├── llm-router.test.ts    │   └── pipeline.test.ts    └── client/        └── StepCard.test.tsx
+
+3. LLM Provider Router — Free Failover Chain
+File: server/src/llm/router.ts
+3.1 Design
+typescript
+import OpenAI from "openai";type ProviderName = "groq" | "cerebras" | "gemini" | "ollama";interface ProviderConfig {  name: ProviderName;  baseURL: string;  apiKeyEnv: string;  defaultModel: string;  rpmLimit: number;  rpdLimit: number;}const PROVIDERS: ProviderConfig[] = [  {    name: "groq",    baseURL: "https://api.groq.com/openai/v1",    apiKeyEnv: "GROQ_API_KEY",    defaultModel: "llama-3.3-70b-versatile",    rpmLimit: 30,    rpdLimit: 14400,  },  {    name: "cerebras",    baseURL: "https://api.cerebras.ai/v1",    apiKeyEnv: "CEREBRAS_API_KEY",    defaultModel: "llama3.3-70b",    rpmLimit: 30,    rpdLimit: 14400,  },  {    name: "gemini",    baseURL: "https://generativelanguage.googleapis.com/v1beta/openai",    apiKeyEnv: "GEMINI_API_KEY",    defaultModel: "gemini-2.5-flash",    rpmLimit: 15,    rpdLimit: 1500,  },  {    name: "ollama",    baseURL: "http://localhost:11434/v1",    apiKeyEnv: "OLLAMA_API_KEY", // dummy value    defaultModel: "llama3.2",    rpmLimit: 9999,    rpdLimit: 9999,  },];
+3.2 Failover Logic
+typescript
+const dailyCounters = new Map<ProviderName, { count: number; resetAt: number }>();export async function callLLM(  messages: OpenAI.Chat.ChatCompletionMessageParam[],  options?: { model?: string; temperature?: number }): Promise<{ content: string; provider: ProviderName; model: string }> {  const errors: string[] = [];  for (const provider of PROVIDERS) {    const apiKey = process.env[provider.apiKeyEnv];    if (!apiKey && provider.name !== "ollama") continue;    // Rate-limit check    const counter = dailyCounters.get(provider.name);    if (counter && counter.count >= provider.rpdLimit && Date.now() < counter.resetAt) {      errors.push(`${provider.name}: daily limit reached`);      continue;    }    try {      const client = new OpenAI({ apiKey: apiKey ?? "ollama", baseURL: provider.baseURL });      const response = await client.chat.completions.create({        model: options?.model ?? provider.defaultModel,        messages,        temperature: options?.temperature ?? 0.7,      });      // Increment counter      const existing = dailyCounters.get(provider.name);      dailyCounters.set(provider.name, {        count: (existing?.count ?? 0) + 1,        resetAt: existing?.resetAt ?? Date.now() + 24 * 60 * 60 * 1000,      });      return {        content: response.choices[0]?.message?.content ?? "",        provider: provider.name,        model: options?.model ?? provider.defaultModel,      };    } catch (err: any) {      errors.push(`${provider.name}: ${err.message}`);      continue;    }  }  throw new Error(`All providers failed:\n${errors.join("\n")}`);}
+All four providers are OpenAI-compatible, so a single openai SDK instance with a custom baseURL works for all of them.
+3.3 Rate Limit Tracking
+Keep an in-memory Map per provider. Before calling, check count < rpdLimit. If exceeded, skip to next provider. Reset counters after 24 hours.
+
+4. Tools — Free Replacements
+File: server/src/tools/search.ts
+4.1 Search — DuckDuckGo via duck-duck-scrape
+typescript
+import { search, SafeSearchType } from "duck-duck-scrape";export async function webSearch(query: string): Promise<string> {  try {    const results = await search(query, {      safeSearch: SafeSearchType.MODERATE,    });    const out = results.results.slice(0, 5).map((r) =>      `Title: ${r.title}\nURL: ${r.url}\nSnippet: ${r.description.slice(0, 300)}\n`    );    return out.join("\n----\n");  } catch (err: any) {    return `Search failed: ${err.message}`;  }}
+Why: DuckDuckGo requires no API key and has no daily quota. The duck-duck-scrape npm package works in Node.js 18+ with zero configuration .
+Alternative: Self-host Jiro locally for 9 engines behind one free local API .
+Alternative: Use SERPJET for 1,000 free searches/month, recurring, no credit card .
+4.2 Scraper — Hardened
+File: server/src/tools/scrape.ts
+typescript
+import axios from "axios";import * as cheerio from "cheerio";import { URL } from "url";import ipaddr from "ipaddr.js";function isSafeUrl(url: string): boolean {  try {    const parsed = new URL(url);    const host = parsed.hostname;    // Block private IP ranges    if (ipaddr.isValid(host)) {      const addr = ipaddr.parse(host);      const range = addr.range();      if (["private", "loopback", "linkLocal", "uniqueLocal"].includes(range)) {        return false;      }    }    // Block localhost    if (["localhost", "127.0.0.1", "::1"].includes(host)) return false;    return true;  } catch {    return false;  }}export async function scrapeUrl(url: string): Promise<string> {  if (!isSafeUrl(url)) {    return `Blocked unsafe URL: ${url}`;  }  try {    const response = await axios.get(url, {      timeout: 8000,      headers: { "User-Agent": "Mozilla/5.0" },      maxRedirects: 3,    });    const contentType = response.headers["content-type"] ?? "";    if (!contentType.includes("text/html")) {      return `Skipped non-HTML content: ${url} (${contentType})`;    }    const $ = cheerio.load(response.data);    $("script, style, nav, footer, header, aside").remove();    const text = $("body").text().replace(/\s+/g, " ").trim();    return text.slice(0, 3000);  } catch (err: any) {    return `Could not scrape URL: ${err.message}`;  }}
+Changes from the original Python version: SSRF guard using ipaddr.js, raise_for_status equivalent via axios (throws on 4xx/5xx by default), content-type check, no rich.print equivalent.
+
+5. Embeddings & Vector Store — Free
+File: server/src/tools/embed.ts
+5.1 Embeddings
+Use @xenova/transformers with all-MiniLM-L6-v2 — runs in Node.js via ONNX runtime, CPU-friendly, no API key.
+typescript
+import { pipeline } from "@xenova/transformers";let embedder: any = null;async function getEmbedder() {  if (!embedder) {    embedder = await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2");  }  return embedder;}export async function embed(text: string): Promise<number[]> {  const pipe = await getEmbedder();  const output = await pipe(text, { pooling: "mean", normalize: true });  return Array.from(output.data as Float32Array);}
+Why not OpenAI embeddings: Paid. @xenova/transformers downloads the model once (~80 MB) and runs entirely in-process.
+5.2 Vector Store — ChromaDB
+Chroma runs in-process via the chromadb npm package — no server, no Docker, no cost. It is Apache 2.0 licensed and supports JavaScript/TypeScript .
+File: server/src/registry/discovery.ts
+typescript
+import { ChromaClient } from "chromadb";import { embed } from "../tools/embed.js";const client = new ChromaClient({ path: "http://localhost:8000" });// Or use persistent local mode:// const client = new ChromaClient({ path: "./data/chroma" });let collection: any = null;async function getCollection() {  if (!collection) {    collection = await client.getOrCreateCollection({      name: "agent_capabilities",      metadata: { "hnsw:space": "cosine" },    });  }  return collection;}export async function registerAgents(agents: { id: string; description: string }[]) {  const col = await getCollection();  for (const agent of agents) {    const vector = await embed(agent.description);    await col.upsert({      ids: [agent.id],      embeddings: [vector],      documents: [agent.description],    });  }}export async function discoverAgents(taskDescription: string, topK = 3) {  const vector = await embed(taskDescription);  const col = await getCollection();  return col.query({ queryEmbeddings: [vector], nResults: topK });}
+Why not Pinecone/Milvus: Pinecone is paid. Milvus requires a server. Chroma is embedded and free.
+
+6. Orchestrator — SSE-Based Progress Streaming
+File: server/src/orchestrator/pipeline.ts
+This is the key design for the React frontend. Instead of running all four steps and returning once, the pipeline emits events after each step. The backend exposes these over SSE so the React app can render live step cards.
+6.1 Pipeline as an Async Generator
+typescript
+import type { PipelineState, StepResult } from "../schemas/pipeline.js";import { callLLM } from "../llm/router.js";import { webSearch } from "../tools/search.js";import { scrapeUrl } from "../tools/scrape.js";export async function* runResearchPipeline(  topic: string): AsyncGenerator<{ step: string; state: PipelineState }> {  const state: PipelineState = { topic, steps: {} };  // ── Step 1: Search ──  state.steps.search = { status: "running" };  yield { step: "search", state };  try {    const started = Date.now();    const searchResults = await webSearch(      `Find recent, reliable and detailed information about: ${topic}`    );    state.steps.search = {      status: "done",      output: searchResults,      durationMs: Date.now() - started,      provider: "duckduckgo",    };  } catch (err: any) {    state.steps.search = { status: "error", error: err.message };    yield { step: "search", state };    return;  }  yield { step: "search", state };  // ── Step 2: Reader ──  state.steps.reader = { status: "running" };  yield { step: "reader", state };  try {    const started = Date.now();    const readerPrompt = `Based on the following search results about '${topic}', pick the most relevant URL and scrape it for deeper content.Search Results:${(state.steps.search.output ?? "").slice(0, 800)}`;    // In a real agent, the LLM would call the scrape tool.    // For v1, extract the first URL and scrape directly.    const urlMatch = (state.steps.search.output ?? "").match(/URL:\s*(\S+)/);    const scraped = urlMatch      ? await scrapeUrl(urlMatch[1])      : "No URL found in search results.";    state.steps.reader = {      status: "done",      output: scraped,      durationMs: Date.now() - started,      provider: "local",    };  } catch (err: any) {    state.steps.reader = { status: "error", error: err.message };    yield { step: "reader", state };    return;  }  yield { step: "reader", state };  // ── Step 3: Writer ──  state.steps.writer = { status: "running" };  yield { step: "writer", state };  try {    const started = Date.now();    const research = `SEARCH RESULTS:\n${state.steps.search.output}\n\nDETAILED SCRAPED CONTENT:\n${state.steps.reader.output}`;    const result = await callLLM([      { role: "system", content: "You are a research report writer. Write a comprehensive, well-structured report." },      { role: "user", content: `Write a comprehensive research report on: ${topic}\n\nResearch:\n${research}` },    ], { temperature: 0.4 });    state.steps.writer = {      status: "done",      output: result.content,      durationMs: Date.now() - started,      provider: result.provider,      model: result.model,    };  } catch (err: any) {    state.steps.writer = { status: "error", error: err.message };    yield { step: "writer", state };    return;  }  yield { step: "writer", state };  // ── Step 4: Critic ──  state.steps.critic = { status: "running" };  yield { step: "critic", state };  try {    const started = Date.now();    const result = await callLLM([      { role: "system", content: "You are a critical reviewer. Score the report 1-10 on accuracy, depth, and clarity. Suggest specific improvements." },      { role: "user", content: `Review this report:\n\n${state.steps.writer.output}` },    ], { temperature: 0.2 });    state.steps.critic = {      status: "done",      output: result.content,      durationMs: Date.now() - started,      provider: result.provider,      model: result.model,    };  } catch (err: any) {    state.steps.critic = { status: "error", error: err.message };    yield { step: "critic", state };    return;  }  yield { step: "critic", state };}
+6.2 Express Route — SSE Streaming
+File: server/src/routes/runs.ts
+typescript
+import { Router } from "express";import { runResearchPipeline } from "../orchestrator/pipeline.js";import { runStore } from "../orchestrator/runStore.js";const router = Router();router.get("/:id/stream", async (req, res) => {  const runId = req.params.id;  const run = runStore.get(runId);  if (!run) {    return res.status(404).json({ error: "Run not found" });  }  res.writeHead(200, {    "Content-Type": "text/event-stream",    "Cache-Control": "no-cache",    Connection: "keep-alive",  });  const send = (event: string, data: any) => {    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);  };  try {    for await (const { step, state } of runResearchPipeline(run.topic)) {      run.state = state;      send("step", { step, state });      // Checkpoint after each step      await runStore.checkpoint(runId, state);    }    send("done", { state: run.state });  } catch (err: any) {    send("error", { message: err.message });  } finally {    res.end();  }});export default router;
+File: server/src/routes/research.ts
+typescript
+import { Router } from "express";import { randomUUID } from "crypto";import { runStore } from "../orchestrator/runStore.js";const router = Router();router.post("/", (req, res) => {  const { topic } = req.body;  if (!topic?.trim()) {    return res.status(400).json({ error: "Topic is required" });  }  const runId = randomUUID();  runStore.create(runId, topic);  res.status(201).json({ runId });});export default router;
+6.3 React Hook — SSE Consumer
+File: client/src/hooks/useResearchRun.ts
+typescript
+import { useState, useCallback, useRef } from "react";import type { PipelineState } from "../types/pipeline";export function useResearchRun() {  const [state, setState] = useState<PipelineState | null>(null);  const [running, setRunning] = useState(false);  const [done, setDone] = useState(false);  const [error, setError] = useState<string | null>(null);  const eventSourceRef = useRef<EventSource | null>(null);  const start = useCallback(async (topic: string) => {    setRunning(true);    setDone(false);    setError(null);    setState(null);    // 1. Create the run    const createRes = await fetch(`${import.meta.env.VITE_API_URL}/api/research`, {      method: "POST",      headers: { "Content-Type": "application/json" },      body: JSON.stringify({ topic }),    });    const { runId } = await createRes.json();    // 2. Subscribe to SSE    const es = new EventSource(      `${import.meta.env.VITE_API_URL}/api/runs/${runId}/stream`    );    eventSourceRef.current = es;    es.addEventListener("step", (e) => {      const { state } = JSON.parse(e.data);      setState(state);    });    es.addEventListener("done", (e) => {      const { state } = JSON.parse(e.data);      setState(state);      setRunning(false);      setDone(true);      es.close();    });    es.addEventListener("error", (e: any) => {      setError(e.data ? JSON.parse(e.data).message : "Stream error");      setRunning(false);      es.close();    });  }, []);  const stop = useCallback(() => {    eventSourceRef.current?.close();    setRunning(false);  }, []);  return { state, running, done, error, start, stop };}
+6.4 React Step Card Component
+File: client/src/components/StepCard.tsx
+tsx
+import type { StepResult } from "../types/pipeline";interface Props {  num: string;  title: string;  step: StepResult | undefined;  desc?: string;}const statusConfig: Record<string, { label: string; className: string }> = {  waiting: { label: "WAITING", className: "status-waiting" },  running: { label: "● RUNNING", className: "status-running" },  done:    { label: "✓ DONE",   className: "status-done" },  error:   { label: "✕ ERROR",  className: "status-error" },};export function StepCard({ num, title, step, desc }: Props) {  const state = step?.status ?? "waiting";  const { label, className } = statusConfig[state];  return (    <div className={`step-card ${state === "running" ? "active" : ""} ${state === "done" ? "done" : ""}`}>      <div className="step-header">        <span className="step-num">{num}</span>        <span className="step-title">{title}</span>        <span className={`step-status ${className}`}>{label}</span>      </div>      {desc && <div className="step-desc">{desc}</div>}      {step?.error && <div className="step-error">{step.error}</div>}    </div>  );}
+Key difference from Streamlit: React re-renders automatically whenever state changes. Because the SSE hook updates setState after each step event, the step cards animate between waiting → running → done without any manual st.rerun() equivalent.
+
+7. Agent Design — Free Models
+File: server/src/agents/
+7.1 Search Agent
+
+Provider: Groq (primary), Cerebras (fallback)
+
+
+Tools: webSearch
+
+
+System prompt: "You are a research search specialist. Use the web search tool to find recent, reliable sources. Return a structured list of findings with URLs."
+
+7.2 Reader Agent
+
+Provider: Groq (primary), Cerebras (fallback)
+
+
+Tools: scrapeUrl
+
+
+System prompt: "You are a content extraction specialist. Given search results, pick the most relevant URL, scrape it, and return the deep content."
+
+7.3 Writer Chain
+
+Provider: Gemini gemini-2.5-flash (higher quality, 1,500 RPD free) 
+
+
+No tools. Pure generation.
+
+
+Temperature: 0.4 (factual, structured)
+
+
+Prompt: "Write a comprehensive research report on {topic} using the following research: {research}."
+
+7.4 Critic Chain
+
+Provider: Cerebras llama3.3-70b (different provider, so rate limits don't collide) 
+
+
+No tools. Pure evaluation.
+
+
+Temperature: 0.2 (deterministic, critical)
+
+
+Prompt: "Review this report. Score it 1–10 on accuracy, depth, and clarity. Suggest specific improvements."
+
+Why spread across providers: Each free tier has its own rate limit. By putting the Writer on Gemini and the Critic on Cerebras, you triple your effective daily budget.
+
+8. State Schema (Zod + TypeScript)
+File: server/src/schemas/pipeline.ts
+typescript
+import { z } from "zod";export const StepResultSchema = z.object({  status: z.enum(["waiting", "running", "done", "error"]).default("waiting"),  output: z.string().optional(),  error: z.string().optional(),  provider: z.string().optional(),  model: z.string().optional(),  durationMs: z.number().optional(),});export const PipelineStateSchema = z.object({  topic: z.string(),  steps: z.record(z.string(), StepResultSchema).default({}),  report: z.string().optional(),  feedback: z.string().optional(),});export type StepResult = z.infer<typeof StepResultSchema>;export type PipelineState = z.infer<typeof PipelineStateSchema>;
+File: client/src/types/pipeline.ts
+typescript
+export interface StepResult {  status: "waiting" | "running" | "done" | "error";  output?: string;  error?: string;  provider?: string;  model?: string;  durationMs?: number;}export interface PipelineState {  topic: string;  steps: Record<string, StepResult>;  report?: string;  feedback?: string;}
+
+9. React Frontend — Component Design
+9.1 App Layout
+text
+┌─────────────────────────────────────────────────────────┐│  Header: "ResearchMind" logo + tagline                   │├──────────────────────────┬──────────────────────────────┤│  Left Column (60%)       │  Right Column (40%)          ││  ┌────────────────────┐  │  ┌────────────────────────┐ ││  │ TopicInput         │  │  │ PipelinePanel          │ ││  │ ────────────────   │  │  │  StepCard 01 Search    │ ││  │ [Run Pipeline]     │  │  │  StepCard 02 Reader    │ ││  │ Try: [chip][chip]  │  │  │  StepCard 03 Writer    │ ││  └────────────────────┘  │  │  StepCard 04 Critic    │ ││                          │  └────────────────────────┘ ││  ┌────────────────────┐  │                              ││  │ Results (after run)│  │                              ││  │ RawOutputPanel x2  │  │                              ││  │ ReportPanel        │  │                              ││  │ DownloadButtons    │  │                              ││  └────────────────────┘  │                              │├──────────────────────────┴──────────────────────────────┤│  Footer: "Powered by LangChain.js · Built with React"    │└─────────────────────────────────────────────────────────┘
+9.2 Key Components
+Component
+Responsibility
+TopicInput
+Text input + Run button + example chips
+PipelinePanel
+Renders 4 StepCards from state.steps
+StepCard
+Shows status badge, title, description, error
+ReportPanel
+Renders final report Markdown (sanitized with DOMPurify)
+RawOutputPanel
+Collapsible <details> for search/reader raw output
+DownloadButtons
+.md and .json download triggers
+useResearchRun
+Hook: POST → SSE subscribe → state updates
+9.3 Markdown Sanitization
+tsx
+import ReactMarkdown from "react-markdown";import DOMPurify from "dompurify";export function ReportPanel({ markdown }: { markdown: string }) {  const sanitized = DOMPurify.sanitize(markdown);  return (    <div className="report-panel">      <div className="panel-label orange">📝 Final Research Report</div>      <ReactMarkdown>{sanitized}</ReactMarkdown>    </div>  );}
+Why DOMPurify: Your Streamlit version had an HTML injection risk because it did f'<div>{r["search"]}</div>' with unsafe_allow_html=True. In React, react-markdown does not render raw HTML by default, and DOMPurify adds a second layer of defense.
+
+10. Deployment — Free Hosting (React + Node.js)
+Option A — Vercel (Frontend) + Render (Backend) — Recommended
+Frontend → Vercel Hobby (Free)
+
+Push code to a public GitHub repo.
+
+
+Go to  HYPERLINK "https://vercel.com/" \t "https://chat.deepseek.com/a/chat/s/_blank" vercel.com, import the repo.
+
+
+Set Root Directory to client.
+
+
+Framework preset: Vite.
+
+
+Build command: pnpm build (or npm run build).
+
+
+Output directory: dist.
+
+
+Add env var: VITE_API_URL=https://your-backend.onrender.com.
+
+
+Deploy. Free tier: 100 GB bandwidth/mo, unlimited static requests .
+
+Backend → Render Free Tier
+
+Go to  HYPERLINK "https://render.com/" \t "https://chat.deepseek.com/a/chat/s/_blank" render.com, New → Web Service.
+
+
+Connect the same repo.
+
+
+Set Root Directory to server.
+
+
+Runtime: Node.
+
+
+Build command: pnpm install && pnpm build.
+
+
+Start command: node dist/index.js.
+
+
+Add env vars:
+
+
+GROQ_API_KEY=gsk_...
+
+
+CEREBRAS_API_KEY=csk-...
+
+
+GEMINI_API_KEY=AIza...
+
+
+CLIENT_ORIGIN=https://your-app.vercel.app
+
+
+PORT=10000 (Render sets this automatically)
+
+
+Free tier: 750 hrs/mo, 512 MB RAM, sleeps after 15 min idle .
+
+Cold start handling: Render free tier spins down after 15 minutes of inactivity, causing ~30s cold starts . The frontend should show a "Waking up backend…" indicator when the first SSE connection is pending.
+Option B — Netlify (Frontend) + Railway (Backend)
+
+Netlify free tier: 100 GB bandwidth, 300 build minutes/mo.
+
+
+Railway free tier: $5 trial credit, then limited. Not truly "free forever" — use only if Render is unavailable.
+
+Option C — All-in-One on Render
+
+Deploy the backend as a Render Web Service.
+
+
+Build the React frontend into server/public/ and serve it with express.static().
+
+
+Single deployment, single free tier. Simpler but less flexible.
+
+Local-Only (Zero Cloud)
+If you want truly zero external dependency, run everything with Ollama:
+bash
+ollama pull llama3.2ollama pull qwen2.5:7b
+Then set OLLAMA_API_KEY=dummy in .env. No API keys, no rate limits, no internet required after model download. The frontend and backend run locally:
+bash
+# Terminal 1 — backendcd server && pnpm dev# Terminal 2 — frontendcd client && pnpm dev
+
+11. Package Files
+Root package.json
+json
+{  "name": "multi-agent-discovery",  "private": true,  "workspaces": ["client", "server"],  "scripts": {    "dev": "concurrently \"npm run dev -w server\" \"npm run dev -w client\"",    "build": "npm run build -w server && npm run build -w client",    "test": "npm run test -w server"  },  "devDependencies": {    "concurrently": "^9.0.0",    "typescript": "^5.6.0"  }}
+client/package.json
+json
+{  "name": "client",  "private": true,  "type": "module",  "scripts": {    "dev": "vite",    "build": "tsc && vite build",    "preview": "vite preview"  },  "dependencies": {    "react": "^18.3.0",    "react-dom": "^18.3.0",    "react-markdown": "^9.0.0",    "dompurify": "^3.1.0"  },  "devDependencies": {    "@types/react": "^18.3.0",    "@types/react-dom": "^18.3.0",    "@vitejs/plugin-react": "^4.3.0",    "vite": "^5.4.0",    "typescript": "^5.6.0"  }}
+server/package.json
+json
+{  "name": "server",  "private": true,  "type": "module",  "scripts": {    "dev": "tsx watch src/index.ts",    "build": "tsc",    "start": "node dist/index.js",    "test": "vitest"  },  "dependencies": {    "express": "^4.21.0",    "cors": "^2.8.5",    "openai": "^4.70.0",    "duck-duck-scrape": "^2.2.0",    "axios": "^1.7.0",    "cheerio": "^1.0.0",    "ipaddr.js": "^2.2.0",    "@xenova/transformers": "^2.17.0",    "chromadb": "^1.9.0",    "zod": "^3.23.0",    "pino": "^9.4.0",    "pino-pretty": "^11.2.0",    "dotenv": "^16.4.0"  },  "devDependencies": {    "@types/express": "^5.0.0",    "@types/cors": "^2.8.17",    "@types/node": "^22.0.0",    "tsx": "^4.19.0",    "typescript": "^5.6.0",    "vitest": "^2.1.0"  }}
+All packages are free and open source.
+
+12. Implementation Order for the Coding Agent
+Phase
+Task
+Files
+1
+Scaffold monorepo: root workspace, client/, server/
+package.json, pnpm-workspace.yaml
+2
+Build server/src/llm/router.ts with failover across Groq → Cerebras → Gemini → Ollama
+llm/router.ts, llm/providers.ts
+3
+Build tools: DuckDuckGo search, hardened scraper, embeddings
+tools/search.ts, tools/scrape.ts, tools/embed.ts
+4
+Define Zod schemas and TypeScript types
+schemas/pipeline.ts
+5
+Build orchestrator as async generator that yields after each step
+orchestrator/pipeline.ts
+6
+Build in-memory run store with checkpointing
+orchestrator/runStore.ts
+7
+Build Express routes: POST /api/research, GET /api/runs/:id/stream (SSE), GET /api/agents
+routes/research.ts, routes/runs.ts, routes/agents.ts
+8
+Build registry/discovery.ts with ChromaDB + embeddings
+registry/discovery.ts, registry/agents.json
+9
+Scaffold React app with Vite + TypeScript
+client/
+10
+Build useResearchRun hook (SSE consumer)
+hooks/useResearchRun.ts
+11
+Build components: TopicInput, StepCard, PipelinePanel, ReportPanel, RawOutputPanel, DownloadButtons
+components/
+12
+Add DOMPurify + ReactMarkdown for report rendering
+ReportPanel.tsx
+13
+Add error handling, logging (pino), and CORS config
+utils/logger.ts, index.ts
+14
+Write tests for tools, router, and pipeline
+tests/
+15
+Deploy frontend to Vercel, backend to Render
+—
+
+13. Success Criteria Checklist
+□ 
+No paid API is called at any point
+
+□ 
+Pipeline completes with only free-tier keys (Groq + Cerebras + Gemini)
+
+□ 
+Automatic failover works when a provider is rate-limited
+
+□ 
+SSE streams step events; React step cards animate between waiting → running → done
+
+□ 
+Raw outputs are rendered safely (DOMPurify + ReactMarkdown)
+
+□ 
+Report is downloadable as .md and .json
+
+□ 
+Frontend runs locally with npm run dev (Vite)
+
+□ 
+Backend runs locally with npm run dev (tsx)
+
+□ 
+Frontend deploys to Vercel free tier
+
+□ 
+Backend deploys to Render free tier
+
+□ 
+Full pipeline completes in under 2 minutes on free tiers
+
+□ 
+Scraper rejects private/loopback IPs (SSRF guard)
+
+□ 
+LLM output is sanitized before rendering in the browser
+
+

@@ -1,0 +1,5 @@
+# Optional: enables `pnpm` as an alternative package manager.
+# npm workspaces (see root package.json) work out of the box with no extra config.
+packages:
+  - "client"
+  - "server"

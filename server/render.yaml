@@ -1,0 +1,30 @@
+# Render Blueprint — free-tier backend deployment (TDD §10, Option A)
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: multi-agent-discovery-api
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NODE_ENV
+        value: production
+      # Set these in the Render dashboard (never commit real keys):
+      - key: GROQ_API_KEY
+        sync: false
+      - key: CEREBRAS_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OLLAMA_API_KEY
+        value: dummy
+      - key: CLIENT_ORIGIN
+        sync: false
+      - key: REGISTRY_PATH
+        value: src/registry/agents.json

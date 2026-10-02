@@ -1,0 +1,296 @@
+﻿
+
+Document 1 — Product Requirements Document (PRD)
+Project: Multi-Agent Discovery PlatformVersion: 2.0 — React + Node.js Free-Tier EditionStatus: Ready for buildConstraint: Zero monetary cost. No credit card. No paid APIs. No paid hosting.
+
+1. Product Overview
+1.1 Vision
+An open, extensible web platform where multiple specialized AI agents collaborate to complete complex research and discovery tasks. The full stack runs on JavaScript/TypeScript — React frontend, Node.js backend — and must be deployable, runnable, and demonstrable without spending any money.
+1.2 Core Constraint — “Free Forever”
+Category
+Constraint
+LLM inference
+Must use providers with permanent free tiers or local models via Ollama
+Search
+Must use free search APIs or self-hosted meta-search
+Vector storage
+Must use embedded / self-hosted open-source DB with a Node.js client
+Embeddings
+Must use open-source models via @xenova/transformers (runs in Node) or free API
+Hosting
+Frontend on Vercel/Netlify free tier; backend on Render/Railway free tier
+Scraping
+Must use free scraping libraries (cheerio, puppeteer headless)
+1.3 Target Users
+
+Builders who want a working multi-agent web app without an API budget.
+
+
+Researchers who need automated web research at zero marginal cost.
+
+
+Learners who want to inspect a full-stack AI pipeline (React → Node → LLM → tools).
+
+
+2. Functional Requirements
+FR-1 — Agent Registration & Discovery
+ID
+Requirement
+Priority
+FR-1.1
+System shall maintain a registry of agent capabilities in a local JSON or SQLite file, served by the Node backend.
+Must
+FR-1.2
+System shall expose a GET /api/agents endpoint returning all registered agents.
+Must
+FR-1.3
+System shall expose a POST /api/discover endpoint that accepts a task description and returns best-matching agents by embedding similarity.
+Must
+FR-1.4
+Registry shall be integrity-checked on load (schema validation with Zod).
+Should
+FR-1.5
+Discovery shall support federated mode: merge multiple registry files.
+Could
+FR-2 — Task Orchestration & Scheduling
+ID
+Requirement
+Priority
+FR-2.1
+Orchestrator (Node.js service) shall accept a high-level goal and decompose it into ordered subtasks.
+Must
+FR-2.2
+Orchestrator shall select an agent for each subtask based on capability match.
+Must
+FR-2.3
+Independent subtasks shall be executable in parallel (Promise.all).
+Should
+FR-2.4
+System shall enforce a max step limit (default 50) to prevent runaway loops.
+Must
+FR-2.5
+Orchestrator shall support automatic LLM provider failover: Groq → Cerebras → Gemini → Ollama.
+Must
+FR-2.6
+Pipeline progress shall be streamed to the frontend via Server-Sent Events (SSE) or WebSocket.
+Must
+FR-3 — Agent Communication & Collaboration
+ID
+Requirement
+Priority
+FR-3.1
+Agents shall communicate via a shared state object (TypeScript interface).
+Must
+FR-3.2
+System shall support one-to-one delegation (orchestrator → worker).
+Must
+FR-3.3
+System shall detect agent unavailability (timeout / empty response) and retry or skip.
+Must
+FR-3.4
+All external tool calls shall pass through a mediator that logs and rate-limits.
+Should
+FR-4 — Execution Monitoring & Observability
+ID
+Requirement
+Priority
+FR-4.1
+Each step shall record: start time, end time, duration, status, model used, provider.
+Must
+FR-4.2
+Backend shall emit step-status events (waiting → running → done / error) over SSE.
+Must
+FR-4.3
+System shall write structured logs to logs/pipeline.log using pino or winston.
+Should
+FR-4.4
+System shall support checkpointing: save intermediate state to disk after each step.
+Should
+FR-5 — Result Aggregation & Reporting
+ID
+Requirement
+Priority
+FR-5.1
+System shall aggregate outputs from all agents into a single report object.
+Must
+FR-5.2
+Report shall be exportable as Markdown and JSON via download endpoints.
+Must
+FR-5.3
+Report shall include provenance: which agent produced which section.
+Should
+FR-5.4
+Frontend shall display raw intermediate outputs in collapsible panels.
+Must
+FR-5.5
+Frontend shall render the final report as sanitized Markdown.
+Must
+
+3. Non-Functional Requirements
+3.1 Performance (Free-Tier Realistic)
+Metric
+Target
+Agent discovery latency
+< 500 ms (local registry + embeddings)
+End-to-end pipeline (4 agents)
+< 120 s (free-tier LLM latency)
+SSE event latency
+< 200 ms
+Frontend first paint
+< 2 s
+Concurrent pipelines
+1–2 (free-tier rate limits)
+3.2 Reliability
+
+Pipeline must not crash if one agent fails; return partial results with an error field.
+
+
+LLM provider failover must be automatic (Groq → Cerebras → Gemini → Ollama).
+
+
+All external calls must have timeouts (search: 10s, scrape: 8s, LLM: 60s).
+
+
+SSE connection must auto-reconnect with exponential backoff on the client.
+
+3.3 Security
+
+Scraper must reject private / loopback IPs (SSRF guard).
+
+
+API keys must never be logged or committed; use .env and hosting platform secrets.
+
+
+All LLM output rendered in the browser must be sanitized (DOMPurify).
+
+
+CORS must be configured to allow only the frontend origin.
+
+3.4 Portability
+
+Backend must run on Node.js 18+ (LTS) with no native compilation required.
+
+
+Frontend must build to static assets deployable on any CDN.
+
+
+Must not depend on any paid service at runtime.
+
+
+Must run inside Render free tier (512 MB RAM).
+
+
+4. Free Technology Stack (Mandated)
+Layer
+Chosen Free Option
+Why
+LLM (primary)
+Groq free tier
+30 RPM, 14,400 req/day, very fast, OpenAI-compatible 
+LLM (fallback 1)
+Cerebras free tier
+~30 RPM, 1M tokens/day, no credit card 
+LLM (fallback 2)
+Google Gemini free tier
+1,500 RPD for Flash, permanent free tier 
+LLM (local)
+Ollama + Llama 3.2 / Qwen2.5
+Zero cost, offline, OpenAI-compatible endpoint
+Search
+duck-duck-scrape (npm)
+No API key, Node.js library, scrapes DuckDuckGo HTML endpoint 
+Search (alt)
+Jiro (self-hosted)
+9 engines behind one local API, free forever 
+Scraping
+cheerio + axios
+Free, local, fast HTML parsing in Node.js
+Scraping (JS-rendered)
+Puppeteer (optional)
+Headless Chrome for JS-heavy pages
+Embeddings
+@xenova/transformers
+Runs all-MiniLM-L6-v2 in Node, no API, ONNX runtime
+Vector DB
+ChromaDB via chromadb npm
+Embedded, Apache 2.0, official JS client 
+Orchestration
+LangChain.js + LangGraph.js
+Free, open source, TypeScript-native 
+Frontend
+React 18 + Vite
+Fast dev, free, deployable as static site
+Backend
+Express.js (or Fastify)
+Lightweight, free, mature
+Streaming
+Server-Sent Events (SSE)
+Built into Express, simpler than WebSocket for one-way streaming
+Logging
+pino
+Fast, JSON-structured logs for Node.js
+Frontend hosting
+Vercel (Hobby) or Netlify
+Free, 100 GB bandwidth/mo, automatic SSL 
+Backend hosting
+Render free tier
+750 hrs/mo, Node.js support, sleeps after 15 min 
+Secrets
+.env locally; platform env vars in production
+Free
+
+5. Risks & Mitigations
+Risk
+Impact
+Mitigation
+Free-tier rate limit hit
+Pipeline stalls
+Automatic failover across Groq → Cerebras → Gemini → Ollama
+Provider changes free tier
+Sudden cost
+Abstract LLM behind an LLMProvider interface; swap with one config change
+Render free tier cold start
+30s delay on first request
+Frontend shows a "waking up backend" indicator; use SSE keep-alive
+Render free tier RAM (512 MB)
+OOM on large scrapes
+Cap scraped text at 3,000 chars; stream results
+No persistent disk on free hosting
+State lost on restart
+Use st.session_state equivalent (in-memory) + optional download/upload of state
+Search results low quality
+Poor reports
+Allow user to paste URLs manually as fallback
+Scraper blocked
+Empty content
+Return error string; agent tries next URL
+Browser tab closed mid-pipeline
+Lost results
+Backend continues; results retrievable via GET /api/runs/:id
+
+6. Acceptance Criteria
+
+A user can enter a topic in the React frontend and receive a structured Markdown report.
+
+
+The pipeline runs end-to-end using only free-tier APIs and local components.
+
+
+If Groq is rate-limited, the system automatically falls back to Cerebras or Gemini without user intervention.
+
+
+The frontend shows live step status (waiting → running → done) via SSE.
+
+
+Raw outputs are viewable in expanders; the final report is downloadable as .md and .json.
+
+
+No paid service is contacted at any point.
+
+
+Frontend deploys to Vercel; backend deploys to Render — both free tier.
+
+
+The full pipeline completes in under 2 minutes on free tiers.
+
+
