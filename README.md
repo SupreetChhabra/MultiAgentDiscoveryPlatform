@@ -72,7 +72,28 @@ npm run dev
 ```bash
 npm run build      # typecheck + bundle server and client
 npm run test       # vitest (server: tools, router, pipeline)
+
+npm run dev                       # then, in a second terminal:
+npm run smoke                     # real-browser end-to-end UI test (see below)
 ```
+
+### 6. Browser smoke test (`npm run smoke`)
+Runs a **real Chrome/Edge** (via `puppeteer-core` — no bundled browser download) against
+the running app and asserts the whole user journey works:
+
+1. React mounts (`ResearchMind` heading + 4 step cards)
+2. A topic is typed and **Run Pipeline** is clicked
+3. All four step cards reach **DONE** over SSE (provider/model/duration tags shown)
+4. The sanitized Markdown report renders, plus the `.md` / `.json` download buttons
+5. **No `<script>` survives into the report body** (DOMPurify guard, PRD §3.3)
+6. Fails the run if any console or page-level error occurred
+
+```bash
+# optional knobs
+APP_URL=http://localhost:5173 TOPIC="solid state batteries" HEADFUL=1 npm run smoke
+```
+Auto-detects Chrome/Edge; override with `CHROME_PATH`. The screenshot lands in
+`browser-smoke.png` (git-ignored).
 
 ---
 

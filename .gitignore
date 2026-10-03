@@ -36,3 +36,7 @@ coverage/
 .vitest/
 .cache/
 *.tsbuildinfo
+
+# Browser smoke-test artifacts
+browser-smoke.png
+smoke.log
