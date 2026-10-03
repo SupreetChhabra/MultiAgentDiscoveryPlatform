@@ -44,7 +44,9 @@ export const PROVIDERS: ProviderConfig[] = [
     baseURL: "https://api.cerebras.ai/v1",
     apiKeyEnv: "CEREBRAS_API_KEY",
     modelEnv: "CEREBRAS_MODEL",
-    defaultModel: "llama3.3-70b",
+    // Cerebras retired the Llama family; Shared Inference now serves
+    // gpt-oss-120b and qwen-3.8-27b (note: no "openai/" prefix here).
+    defaultModel: "gpt-oss-120b",
     rpmLimit: 30,
     rpdLimit: 14400,
     requiresApiKey: true,
@@ -54,7 +56,9 @@ export const PROVIDERS: ProviderConfig[] = [
     baseURL: "https://generativelanguage.googleapis.com/v1beta/openai",
     apiKeyEnv: "GEMINI_API_KEY",
     modelEnv: "GEMINI_MODEL",
-    defaultModel: "gemini-2.5-flash",
+    // `gemini-flash-latest` is a rolling alias — safer than a pinned id, which
+    // Google retires for new users (gemini-2.5-flash already returns 404).
+    defaultModel: "gemini-flash-latest",
     rpmLimit: 15,
     rpdLimit: 1500,
     requiresApiKey: true,
