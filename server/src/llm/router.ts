@@ -95,7 +95,11 @@ export async function callLLM(
   for (const provider of order) {
     const apiKey = providerApiKey(provider);
     if (!apiKey) {
-      errors.push(`${provider.name}: no API key (${provider.apiKeyEnv} not set)`);
+      // Distinguish "set but blank" from "not set" — empty .env placeholders
+      // are a common source of silent failover.
+      const raw = process.env[provider.apiKeyEnv];
+      const reason = raw === "" ? "is empty" : "not set";
+      errors.push(`${provider.name}: no API key (${provider.apiKeyEnv} ${reason})`);
       continue;
     }
 
