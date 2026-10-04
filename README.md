@@ -14,6 +14,26 @@ to complete complex research and discovery tasks — running **entirely on free 
 
 ---
 
+## 🎬 Demo
+
+[![ResearchMind demo — click to play](./docs/demo/poster.png)](./docs/demo/researchmind-demo-preview.mp4)
+
+**[▶ Play the demo](./docs/demo/researchmind-demo-preview.mp4)** — *1152×720 · 15 fps · H.264 · 1.7 MB · 1 min 54 s*
+<sub>Want it sharper? Grab the [full-quality 4.1 MB version](./docs/demo/researchmind-demo.mp4) (20 fps) — GitHub only serves files over ~2 MB as a download.</sub>
+
+Click the poster (or the link) to play it right here on the page. The recording drives the **real UI** through
+three topics — `health benefits of green tea`, `How do solid-state batteries work?`, and
+`State of open-source LLMs` — showing a topic typed and **Run Pipeline** clicked, the four agents
+(Search → Reader → Writer → Critic) streaming live over SSE with provider/model/duration tags, and
+each generated report scrolled slowly from top to bottom before moving to the next topic.
+
+> The recording was made with the included Playwright script — see
+> [`scripts/record-demo.mjs`](scripts/record-demo.mjs) (drives the UI + records WebM) and
+> [`scripts/transcode-video.mjs`](scripts/transcode-video.mjs) (ffmpeg → H.264 MP4 + poster frame).
+> Regenerate it anytime with `npm run demo`; raw WebM lands in the git-ignored `videos/`.
+
+---
+
 ## 📁 Project structure
 
 ```

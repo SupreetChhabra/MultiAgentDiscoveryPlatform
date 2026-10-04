@@ -12,11 +12,15 @@
     "build": "npm run build -w server && npm run build -w client",
     "test": "npm run test -w server",
     "smoke": "node scripts/browser-smoke.mjs",
+    "record": "node scripts/record-demo.mjs",
+    "transcode": "node scripts/transcode-video.mjs",
+    "demo": "npm run record && npm run transcode",
     "start": "npm run start -w server",
     "clean": "rimraf client/dist server/dist"
   },
   "devDependencies": {
     "concurrently": "^9.0.0",
+    "playwright-core": "^1.63.0",
     "puppeteer-core": "^25.12.0",
     "rimraf": "^6.0.0",
     "typescript": "^5.6.0"

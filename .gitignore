@@ -19,6 +19,9 @@ logs/
 *.log
 npm-debug.log*
 
+# Recorded demo videos (raw webm — committed artifacts live in docs/demo/)
+videos/
+
 # Runtime data / checkpoints / vector store
 data/
 server/data/
