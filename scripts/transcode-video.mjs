@@ -1,10 +1,17 @@
 /**
- * Transcode the recorded .webm into GitHub-friendly MP4s + a poster frame.
+ * Transcode the recorded .webm into a GitHub-friendly MP4 + a poster frame.
  *
- * Output: docs/demo/researchmind-demo-preview.mp4  (under ~2 MB so GitHub renders
- *           an inline player: 1152x720, 15 fps, crf 42)
- *         docs/demo/researchmind-demo.mp4         (crisp master: 1152x720, 20 fps, crf 37)
- *         docs/demo/poster.png                    (frame near the end: report + caption)
+ * Output: docs/demo/researchmind-demo.mp4  (1280x800, 25 fps, crf 20)
+ *         docs/demo/poster.png              (frame near the end: report + caption)
+ *
+ * Playback note: the README links the MP4 through a GitHub *attachment* URL
+ * (github.com/user-attachments/assets/...), which serves `Content-Type: video/mp4`
+ * inline so the browser plays it. Linking the repo blob/raw URL instead does NOT
+ * work -- raw.githubusercontent.com serves `application/octet-stream` with
+ * `X-Content-Type-Options: nosniff`, so the browser downloads the file at any size.
+ *
+ * Size budget: free-plan GitHub attachments cap video at 10 MB, so the encoder
+ * escalates CRF until the output fits.
  *
  * Env: FFMPEG_PATH (defaults to the local build at D:\Pega\1\…)
  * Usage: node scripts/transcode-video.mjs [input.webm]
@@ -23,8 +30,16 @@ const FFPROBE = FFMPEG.replace(/ffmpeg(\.exe)?$/i, "ffprobe.exe");
 const VIDEO_DIR = path.join(ROOT, "videos");
 const OUT_DIR = path.join(ROOT, "docs", "demo");
 const OUT_MP4 = path.join(OUT_DIR, "researchmind-demo.mp4");
-const OUT_PREVIEW = path.join(OUT_DIR, "researchmind-demo-preview.mp4");
 const POSTER = path.join(OUT_DIR, "poster.png");
+
+// Free-plan GitHub attachments cap video uploads at 10 MB. The recording is a
+// text-dense UI capture, so we keep the source resolution/fps and trade CRF
+// until it fits rather than downscaling or dropping frames.
+const WIDTH = 1280;
+const HEIGHT = 800;
+const FPS = 25;
+const CRF_LADDER = [20, 23, 26, 29, 32, 35];
+const CAP_MB = 10;
 
 const fail = (msg) => {
   console.error(`[transcode] ERROR: ${msg}`);
@@ -63,32 +78,31 @@ console.log(`[transcode] source duration: ${dur.toFixed(1)}s`);
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
 
-// GitHub will not preview a video over ~2 MB (measured: 1.28 MB renders a player,
-// 2.22 MB shows "we can't show files that are this big"), but a 114 s text-dense
-// UI capture needs ~4 MB to keep small type crisp. So emit two files:
-//   preview -> under the cap, plays inline on github.com (softer, 15 fps)
-//   full    -> 20 fps, crisp; GitHub offers it as a download only
+// Encode at source resolution/fps, escalating CRF until it fits the 10 MB cap.
 // Don't add "-tune animation": it disables deblocking and inflates the file ~25%.
-const ENCODES = [
-  { label: "preview", out: OUT_PREVIEW, fps: 15, crf: 42, capMB: 1.9 },
-  { label: "full   ", out: OUT_MP4, fps: 20, crf: 37, capMB: Infinity },
-];
-
-for (const { label, out, fps, crf, capMB } of ENCODES) {
-  console.log(`[transcode] encoding ${label} (1152×720 · ${fps} fps · crf ${crf} · yuv420p · faststart)…`);
+// "yuv420p" + "faststart" are required for Safari and for progressive playback.
+let result = null;
+for (const crf of CRF_LADDER) {
+  console.log(`[transcode] encoding (${WIDTH}×${HEIGHT} · ${FPS} fps · crf ${crf} · yuv420p · faststart)…`);
   const enc = spawnSync(
     FFMPEG,
-    ["-y", "-i", input, "-vf", `fps=${fps},scale=1152:720`, "-c:v", "libx264", "-crf", String(crf),
-     "-preset", "medium", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an", out],
+    ["-y", "-i", input, "-vf", `fps=${FPS},scale=${WIDTH}:${HEIGHT}`, "-c:v", "libx264", "-crf", String(crf),
+     "-preset", "medium", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an", OUT_MP4],
     { stdio: ["ignore", "ignore", "pipe"], encoding: "utf8", windowsHide: true }
   );
-  if (enc.status !== 0) fail(`${label} encode failed:\n${(enc.stderr ?? "").slice(-800)}`);
+  if (enc.status !== 0) fail(`crf ${crf} encode failed:\n${(enc.stderr ?? "").slice(-800)}`);
 
-  const mb = fs.statSync(out).size / 1024 / 1024;
-  console.log(`[transcode] ${label}: ${mb.toFixed(2)} MB -> ${out}`);
-  if (mb > capMB)
-    console.log(`[transcode] WARNING: preview over ~2 MB means GitHub shows "can't show files this big" instead of a player — raise its crf`);
+  const mb = fs.statSync(OUT_MP4).size / 1024 / 1024;
+  console.log(`[transcode] crf ${crf}: ${mb.toFixed(2)} MB`);
+  result = { crf, mb };
+  if (mb <= CAP_MB) break;
+  console.log(`[transcode] over the ${CAP_MB} MB attachment cap — raising crf`);
 }
+
+if (!result) fail("no encode produced output");
+if (result.mb > CAP_MB)
+  console.log(`[transcode] WARNING: ${result.mb.toFixed(2)} MB still exceeds the ${CAP_MB} MB cap — the upload may fail`);
+console.log(`[transcode] final: crf ${result.crf} · ${result.mb.toFixed(2)} MB -> ${OUT_MP4}`);
 
 const posterAt = Math.max(1, dur - 1.5);
 console.log(`[transcode] extracting poster @ ${posterAt.toFixed(1)}s…`);
