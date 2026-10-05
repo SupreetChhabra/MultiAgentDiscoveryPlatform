@@ -16,12 +16,12 @@ to complete complex research and discovery tasks — running **entirely on free 
 
 ## 🎬 Demo
 
-[![ResearchMind demo — click to play](./docs/demo/poster.png)](__DEMO_VIDEO_URL__)
+[![ResearchMind demo — click to open](./docs/demo/poster.png)](./docs/demo/researchmind-demo.mp4)
 
-**[▶ Play the demo](__DEMO_VIDEO_URL__)** — *1280×800 · 25 fps · H.264 · 7.8 MB · 1 min 54 s*
-<sub>Prefer a local copy? <a href="./docs/demo/researchmind-demo.mp4">Download the MP4</a> (committed in <code>docs/demo/</code>).</sub>
+**[▶ Watch the demo](./docs/demo/researchmind-demo.mp4)** — *1280×800 · 25 fps · H.264 · 7.8 MB · 1 min 54 s*
+<sub>Committed in <code>docs/demo/</code>; GitHub serves it as a download/preview-file page rather than an inline player (see note below).</sub>
 
-Click the poster (or the link) to play it right here on the page. The recording drives the **real UI** through
+Click the poster (or the link) to open the MP4 file page. The recording drives the **real UI** through
 three topics — `health benefits of green tea`, `How do solid-state batteries work?`, and
 `State of open-source LLMs` — showing a topic typed and **Run Pipeline** clicked, the four agents
 (Search → Reader → Writer → Critic) streaming live over SSE with provider/model/duration tags, and
@@ -32,11 +32,13 @@ each generated report scrolled slowly from top to bottom before moving to the ne
 > [`scripts/transcode-video.mjs`](scripts/transcode-video.mjs) (ffmpeg → H.264 MP4 + poster frame).
 > Regenerate it anytime with `npm run demo`; raw WebM lands in the git-ignored `videos/`.
 >
-> The player works because the MP4 is served from a GitHub **attachment** URL, which returns
-> `Content-Type: video/mp4` and lets the browser play it inline. Linking the committed file directly
-> (`./docs/demo/researchmind-demo.mp4`) instead makes GitHub serve `application/octet-stream` with
-> `X-Content-Type-Options: nosniff`, which forces a download at any file size — so the download link
-> above is a convenience copy, not the playable one.
+> The MP4 is linked from within the repo because GitHub serves committed video files from
+> `docs/` as `application/octet-stream` with `X-Content-Type-Options: nosniff`, which forces a
+> download at any file size — there is no inline player for repo-committed video. A true inline
+> player needs the same file uploaded as a GitHub **attachment** (which returns
+> `Content-Type: video/mp4` and plays in the browser); the manual upload step tracked in
+> [issue #4](https://github.com/SupreetChhabra/MultiAgentDiscoveryPlatform/issues/4) is still
+> pending. Until then, the committed file plays after one click-through to the file page.
 
 ---
 
