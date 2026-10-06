@@ -16,29 +16,24 @@ to complete complex research and discovery tasks — running **entirely on free 
 
 ## 🎬 Demo
 
-[![ResearchMind demo — click to open](./docs/demo/poster.png)](./docs/demo/researchmind-demo.mp4)
+https://github.com/user-attachments/assets/c06e5266-e3ba-45fd-98e9-17fa4918d4fd
 
-**[▶ Watch the demo](./docs/demo/researchmind-demo.mp4)** — *1280×800 · 25 fps · H.264 · 7.8 MB · 1 min 54 s*
-<sub>Committed in <code>docs/demo/</code>; GitHub serves it as a download/preview-file page rather than an inline player (see note below).</sub>
-
-Click the poster (or the link) to open the MP4 file page. The recording drives the **real UI** through
-three topics — `health benefits of green tea`, `How do solid-state batteries work?`, and
-`State of open-source LLMs` — showing a topic typed and **Run Pipeline** clicked, the four agents
+Click the video above to see the app in action: a topic typed and **Run Pipeline** clicked, the four agents
 (Search → Reader → Writer → Critic) streaming live over SSE with provider/model/duration tags, and
-each generated report scrolled slowly from top to bottom before moving to the next topic.
+each generated report scrolled slowly from top to bottom — across three topics:
+`health benefits of green tea`, `How do solid-state batteries work?`, and `State of open-source LLMs`.
 
 > The recording was made with the included Playwright script — see
 > [`scripts/record-demo.mjs`](scripts/record-demo.mjs) (drives the UI + records WebM) and
 > [`scripts/transcode-video.mjs`](scripts/transcode-video.mjs) (ffmpeg → H.264 MP4 + poster frame).
 > Regenerate it anytime with `npm run demo`; raw WebM lands in the git-ignored `videos/`.
 >
-> The MP4 is linked from within the repo because GitHub serves committed video files from
-> `docs/` as `application/octet-stream` with `X-Content-Type-Options: nosniff`, which forces a
-> download at any file size — there is no inline player for repo-committed video. A true inline
-> player needs the same file uploaded as a GitHub **attachment** (which returns
-> `Content-Type: video/mp4` and plays in the browser); the manual upload step tracked in
-> [issue #4](https://github.com/SupreetChhabra/MultiAgentDiscoveryPlatform/issues/4) is still
-> pending. Until then, the committed file plays after one click-through to the file page.
+> The MP4 is hosted as a GitHub attachment (uploaded via issue #4) so it renders as an
+> inline player above; the same file is also committed in [`docs/demo/`](docs/demo/) as a
+> downloadable copy.
+>
+> To replace it: `gh issue comment 4 --attach docs/demo/researchmind-demo.mp4 --body '...'`,
+> then paste the new `user-attachments` URL into the Demo section.
 
 ---
 
